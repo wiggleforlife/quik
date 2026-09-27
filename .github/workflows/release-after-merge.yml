@@ -11,6 +11,8 @@ jobs:
   release:
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
     uses: ./.github/workflows/build-and-release.yml
+    permissions:
+      contents: write
     with:
       release_ref: master
       publish_release: true
@@ -51,7 +53,7 @@ jobs:
 
       - name: Check out repository
         if: steps.cfg.outputs.ready == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: master
 

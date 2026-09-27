@@ -22,6 +22,7 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import com.uber.autodispose.android.lifecycle.scope
 import com.uber.autodispose.autoDisposable
 import dev.octoshrimpy.quik.R
+import dev.octoshrimpy.quik.common.ExternalNavigator
 import dev.octoshrimpy.quik.common.Navigator
 import dev.octoshrimpy.quik.common.base.QkViewModel
 import dev.octoshrimpy.quik.extensions.mapNotNull
@@ -47,6 +48,7 @@ import dev.octoshrimpy.quik.model.SyncLog
 import dev.octoshrimpy.quik.repository.ConversationRepository
 import dev.octoshrimpy.quik.repository.EmojiReactionRepository
 import dev.octoshrimpy.quik.repository.MessageRepository
+import dev.octoshrimpy.quik.repository.ScheduledMessageRepository
 import dev.octoshrimpy.quik.repository.SyncRepository
 import dev.octoshrimpy.quik.util.Preferences
 import io.reactivex.android.schedulers.AndroidSchedulers
@@ -76,8 +78,10 @@ class MainViewModel @Inject constructor(
     private val markUnarchived: MarkUnarchived,
     private val markUnpinned: MarkUnpinned,
     private val markUnread: MarkUnread,
+    private val scheduledMessageRepo: ScheduledMessageRepository,
     private val speakThreads: SpeakThreads,
     private val navigator: Navigator,
+    private val externalNavigator: ExternalNavigator,
     private val permissionManager: PermissionManager,
     private val prefs: Preferences,
     private val ratingManager: RatingManager,
@@ -112,6 +116,15 @@ class MainViewModel @Inject constructor(
         disposables += ratingManager.shouldShowRating
                 .subscribe { show -> newState { copy(showRating = show) } }
 
+        // Fetch scheduled messages and assign it to hasScheduledMessage
+        disposables += scheduledMessageRepo.getScheduledMessages()
+            .asFlowable()
+            .map { messages ->
+                messages.map { it.conversationId }.toSet()
+            }
+            .subscribe { ids ->
+                newState { copy(scheduledConversationIds = ids) }
+            }
 
         // Migrate the preferences from 2.7.3
         migratePreferences.execute(Unit)
@@ -250,7 +263,7 @@ class MainViewModel @Inject constructor(
 
         view.changelogMoreIntent
                 .autoDisposable(view.scope())
-                .subscribe { navigator.showChangelog() }
+                .subscribe { externalNavigator.showChangelog() }
 
         view.queryChangedIntent
                 .debounce(200, TimeUnit.MILLISECONDS)
@@ -333,9 +346,10 @@ class MainViewModel @Inject constructor(
                         NavItem.BLOCKING -> navigator.showBlockedConversations()
                         NavItem.MESSAGE_UTILS -> navigator.showMessageUtils()
                         NavItem.SETTINGS -> navigator.showSettings()
+                        NavItem.ABOUT -> navigator.showAbout()
 //                        NavItem.PLUS -> navigator.showQksmsPlusActivity("main_menu")
 //                        NavItem.HELP -> navigator.showSupport()
-                        NavItem.INVITE -> navigator.showInvite()
+                        NavItem.INVITE -> externalNavigator.showInvite()
                         else -> Unit
                     }
                     drawerItem
@@ -395,7 +409,7 @@ class MainViewModel @Inject constructor(
                 .mapNotNull(conversationRepo::getConversation)
                 .map { conversation -> conversation.recipients }
                 .mapNotNull { recipients -> recipients[0]?.address?.takeIf { recipients.size == 1 } }
-                .doOnNext(navigator::addContact)
+                .doOnNext(externalNavigator::addContact)
                 .autoDisposable(view.scope())
                 .subscribe()
 
@@ -463,7 +477,7 @@ class MainViewModel @Inject constructor(
         view.rateIntent
                 .autoDisposable(view.scope())
                 .subscribe {
-                    navigator.showRating()
+                    externalNavigator.showRating()
                     ratingManager.rate()
                 }
 
@@ -552,7 +566,7 @@ class MainViewModel @Inject constructor(
                                     ?.address // most recent non-me msg address
                                 ?: conversationRepo.getConversation(threadId)
                                     ?.recipients?.firstOrNull()?.address  // first recipient in convo
-                            )?.let(navigator::makePhoneCall)
+                            )?.let(externalNavigator::makePhoneCall)
                         }
                         Preferences.SWIPE_ACTION_READ -> markRead.execute(listOf(threadId))
                         Preferences.SWIPE_ACTION_UNREAD -> markUnread.execute(listOf(threadId))
@@ -575,7 +589,7 @@ class MainViewModel @Inject constructor(
                         !state.contactPermission -> view.requestPermissions()
                         !state.notificationPermission -> {
                             if (prefs.hasAskedForNotificationPermission.get()) {
-                                navigator.showPermissions()
+                                externalNavigator.showPermissionsInSettings()
                             } else {
                                 prefs.hasAskedForNotificationPermission.set(true)
                                 view.requestPermissions()

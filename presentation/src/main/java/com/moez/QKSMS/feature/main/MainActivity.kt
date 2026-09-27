@@ -28,7 +28,6 @@ import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
-import android.view.ViewStub
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
@@ -45,7 +44,7 @@ import com.uber.autodispose.android.lifecycle.scope
 import com.uber.autodispose.autoDisposable
 import dagger.android.AndroidInjection
 import dev.octoshrimpy.quik.R
-import dev.octoshrimpy.quik.common.Navigator
+import dev.octoshrimpy.quik.common.ExternalNavigator
 import dev.octoshrimpy.quik.common.androidxcompat.drawerOpen
 import dev.octoshrimpy.quik.common.base.QkThemedActivity
 import dev.octoshrimpy.quik.common.util.extensions.autoScrollToStart
@@ -75,7 +74,7 @@ class MainActivity : QkThemedActivity(), MainView {
 
     @Inject lateinit var blockingDialog: BlockingDialog
     @Inject lateinit var disposables: CompositeDisposable
-    @Inject lateinit var navigator: Navigator
+    @Inject lateinit var externalNavigator: ExternalNavigator
     @Inject lateinit var conversationsAdapter: ConversationsAdapter
     @Inject lateinit var drawerBadgesExperiment: DrawerBadgesExperiment
     @Inject lateinit var searchAdapter: SearchAdapter
@@ -104,6 +103,7 @@ class MainActivity : QkThemedActivity(), MainView {
                 binding.drawer.blocking.clicks().map { NavItem.BLOCKING },
                 binding.drawer.messageUtils.clicks().map { NavItem.MESSAGE_UTILS },
                 binding.drawer.settings.clicks().map { NavItem.SETTINGS },
+                binding.drawer.about.clicks().map { NavItem.ABOUT },
 //                plus.clicks().map { NavItem.PLUS },
 //                help.clicks().map { NavItem.HELP },
                 binding.drawer.invite.clicks().map { NavItem.INVITE }))
@@ -214,6 +214,8 @@ class MainActivity : QkThemedActivity(), MainView {
             finish()
             return
         }
+
+        conversationsAdapter.hasScheduledConversation = state.scheduledConversationIds
 
         val addContact = when (state.page) {
             is Inbox -> state.page.addContact
@@ -397,7 +399,7 @@ class MainActivity : QkThemedActivity(), MainView {
         }
 
     override fun requestDefaultSms() =
-        navigator.showDefaultSmsDialog(this)
+        externalNavigator.showDefaultSmsDialog(this)
 
     override fun requestPermissions() {
         val permissions = mutableListOf(

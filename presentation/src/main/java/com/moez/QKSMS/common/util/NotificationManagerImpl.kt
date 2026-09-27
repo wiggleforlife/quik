@@ -80,6 +80,9 @@ class NotificationManagerImpl @Inject constructor(
     companion object {
         const val DEFAULT_CHANNEL_ID = "notifications_default"
         const val BACKUP_RESTORE_CHANNEL_ID = "notifications_backup_restore"
+        const val RECEIVING_WORKER_CHANNEL_ID = "notifications_receiving_worker"
+
+        val MARK_TYPE_COUNT = MessageMarkReceiver.MarkType.values().size
 
         val VIBRATE_PATTERN = longArrayOf(0, 200, 0, 200)
     }
@@ -91,11 +94,27 @@ class NotificationManagerImpl @Inject constructor(
         createNotificationChannel()
     }
 
+    /**
+     * In order to not have conflicting pending intents for the same receiver,
+     * let's generate one for each type of marking action.
+     */
+    fun MessageMarkReceiver.MarkType.getRequestCode(threadId: Long): Int {
+        return threadId.toInt() * MARK_TYPE_COUNT + ordinal
+    }
+
     // Required for running workers on Android 12 and older
-    override fun getForegroundNotificationForWorkersOnOlderAndroids() =
-        NotificationCompat.Builder(context, DEFAULT_CHANNEL_ID)
+    override fun getForegroundNotificationForWorkersOnOlderAndroids(): Notification {
+        val faqIntent = Intent(
+            Intent.ACTION_VIEW,
+            "https://github.com/quik-sms/quik/wiki/Frequently-Asked-Questions#why-do-i-have-a-persistent-notification-saying-receiving-messages".toUri()
+        )
+        val faqPendingIntent = PendingIntent.getActivity(
+            context, 0, faqIntent, PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(context, RECEIVING_WORKER_CHANNEL_ID)
             .setContentTitle(context.getString(R.string.notification_foreground_worker_title))
             .setContentText(context.getString(R.string.notification_foreground_worker_text))
+            .setContentIntent(faqPendingIntent)
             .setShowWhen(false)
             .setWhen(System.currentTimeMillis())
             .setSmallIcon(R.drawable.ic_notification_worker)
@@ -105,7 +124,7 @@ class NotificationManagerImpl @Inject constructor(
             .setOngoing(true)
             .setSilent(true)
             .build()
-
+    }
     /**
      * Updates the notification for a particular conversation
      */
@@ -145,7 +164,10 @@ class NotificationManagerImpl @Inject constructor(
         val seenIntent = Intent(context, MessageMarkReceiver::class.java)
             .putExtra("threadId", threadId)
             .putExtra("type", MessageMarkReceiver.MarkType.Seen.ordinal)
-        val seenPI = PendingIntent.getBroadcast(context, threadId.toInt(), seenIntent,
+        val seenPI = PendingIntent.getBroadcast(
+            context,
+            MessageMarkReceiver.MarkType.Seen.getRequestCode(threadId),
+            seenIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         // We can't store a null preference, so map it to a null Uri if the pref string is empty
@@ -164,7 +186,6 @@ class NotificationManagerImpl @Inject constructor(
                 .setSmallIcon(R.drawable.ic_notification)
                 .setNumber(messages.size)
                 .setAutoCancel(true)
-                .setOnlyAlertOnce(true)
                 .setContentIntent(contentPI)
                 .setDeleteIntent(seenPI)
                 .setLights(Color.WHITE, 500, 2000)
@@ -275,7 +296,10 @@ class NotificationManagerImpl @Inject constructor(
                             val intent = Intent(context, MessageMarkReceiver::class.java)
                                 .putExtra("threadId", threadId)
                                 .putExtra("type", MessageMarkReceiver.MarkType.Archived.ordinal)
-                            val pi = PendingIntent.getBroadcast(context, threadId.toInt(), intent,
+                            val pi = PendingIntent.getBroadcast(
+                                context,
+                                MessageMarkReceiver.MarkType.Archived.getRequestCode(threadId),
+                                intent,
                                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                             NotificationCompat.Action.Builder(R.drawable.ic_archive_white_24dp, actionLabels[action], pi)
                                     .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_ARCHIVE).build()
@@ -304,7 +328,10 @@ class NotificationManagerImpl @Inject constructor(
                             val intent = Intent(context, MessageMarkReceiver::class.java)
                                 .putExtra("threadId", threadId)
                                 .putExtra("type", MessageMarkReceiver.MarkType.Read.ordinal)
-                            val pi = PendingIntent.getBroadcast(context, threadId.toInt(), intent,
+                            val pi = PendingIntent.getBroadcast(
+                                context,
+                                MessageMarkReceiver.MarkType.Read.getRequestCode(threadId),
+                                intent,
                                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                             NotificationCompat.Action.Builder(R.drawable.ic_check_white_24dp, actionLabels[action], pi)
                                     .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ).build()
@@ -355,7 +382,7 @@ class NotificationManagerImpl @Inject constructor(
 
             context.startActivity(intent)
         }
-        val sc = shortcutManager.getShortcut(threadId)
+        val sc = shortcutManager.getOrCreateShortcut(threadId)
         notification.setShortcutInfo(sc)
         notificationManager.notify(threadId.toInt(), notification.build())
 
@@ -454,39 +481,56 @@ class NotificationManagerImpl @Inject constructor(
      */
     override fun createNotificationChannel(threadId: Long) {
 
-        // Only proceed if the android version supports notification channels, and the channel hasn't
-        // already been created
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || getNotificationChannel(threadId) != null) {
+        // Only proceed if the android version supports notification channels
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return
         }
 
-        val channel = when (threadId) {
-            0L -> NotificationChannel(DEFAULT_CHANNEL_ID, "Default", NotificationManager.IMPORTANCE_HIGH).apply {
-                enableLights(true)
-                lightColor = Color.WHITE
-                enableVibration(true)
-                vibrationPattern = VIBRATE_PATTERN
-            }
-
-            else -> {
-                val conversation = conversationRepo.getConversation(threadId) ?: return
-                val channelId = buildNotificationChannelId(threadId)
-                val title = conversation.getTitle()
-                NotificationChannel(channelId, title, NotificationManager.IMPORTANCE_HIGH).apply {
+        val channels: List<NotificationChannel> = when (threadId) {
+            0L -> listOf(
+                NotificationChannel(
+                    DEFAULT_CHANNEL_ID,
+                    "Default",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
                     enableLights(true)
                     lightColor = Color.WHITE
                     enableVibration(true)
                     vibrationPattern = VIBRATE_PATTERN
-                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                    setSound(prefs.ringtone().get().let(Uri::parse), AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build())
-                }
+                },
+                NotificationChannel(
+                    RECEIVING_WORKER_CHANNEL_ID,
+                    context.getString(R.string.notification_foreground_worker_channel_name),
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    enableLights(false)
+                    enableVibration(false)
+                },
+            )
+
+            else -> {
+                if (getNotificationChannel(threadId) != null) return
+                val conversation = conversationRepo.getConversation(threadId) ?: return
+                val channelId = buildNotificationChannelId(threadId)
+                val title = conversation.getTitle()
+                listOf(
+                    NotificationChannel(channelId, title, NotificationManager.IMPORTANCE_HIGH).apply {
+                        enableLights(true)
+                        lightColor = Color.WHITE
+                        enableVibration(true)
+                        vibrationPattern = VIBRATE_PATTERN
+                        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                        setSound(prefs.ringtone().get().let(Uri::parse), AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build())
+                    }
+                )
             }
         }
 
-        notificationManager.createNotificationChannel(channel)
+        for (channel in channels)
+            notificationManager.createNotificationChannel(channel)
     }
 
     /**

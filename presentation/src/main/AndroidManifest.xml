@@ -106,10 +106,11 @@
         </activity>
         <activity android:name=".feature.messageutils.MessageUtilsActivity" />
         <activity android:name=".feature.settings.SettingsActivity" />
+        <activity android:name=".feature.settings.about.AboutActivity" />
         <activity android:name=".feature.plus.PlusActivity" />
         <activity
             android:name=".feature.gallery.GalleryActivity"
-            android:theme="@style/AppTheme.Black" />
+            android:theme="@style/AppTheme.Gallery" />
         <activity android:name=".feature.conversationinfo.ConversationInfoActivity" />
         <activity android:name=".feature.notificationprefs.NotificationPrefsActivity" />
         <activity android:name=".feature.blocking.BlockingActivity" />

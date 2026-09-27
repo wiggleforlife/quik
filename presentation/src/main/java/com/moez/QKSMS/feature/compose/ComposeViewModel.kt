@@ -39,6 +39,7 @@ import com.moez.QKSMS.manager.MediaRecorderManager.AUDIO_FILE_SUFFIX
 import com.uber.autodispose.android.lifecycle.scope
 import com.uber.autodispose.autoDisposable
 import dev.octoshrimpy.quik.R
+import dev.octoshrimpy.quik.common.ExternalNavigator
 import dev.octoshrimpy.quik.common.Navigator
 import dev.octoshrimpy.quik.common.base.QkViewModel
 import dev.octoshrimpy.quik.common.util.ClipboardUtils
@@ -120,6 +121,7 @@ class ComposeViewModel @Inject constructor(
     private val messageRepo: MessageRepository,
     private val scheduledMessageRepo: ScheduledMessageRepository,
     private val navigator: Navigator,
+    private val externalNavigator: ExternalNavigator,
     private val permissionManager: PermissionManager,
     private val phoneNumberUtils: PhoneNumberUtils,
     private val prefs: Preferences,
@@ -401,7 +403,7 @@ class ComposeViewModel @Inject constructor(
                     ?: conversation.recipients.firstOrNull()?.address  // first recipient in convo
             }
             .autoDisposable(view.scope())
-            .subscribe { navigator.makePhoneCall(it) }
+            .subscribe { externalNavigator.makePhoneCall(it) }
 
         // Open the conversation settings if info button is clicked
         view.optionsItemIntent
@@ -619,9 +621,11 @@ class ComposeViewModel @Inject constructor(
 
         // toggle the group sending mode and update the conversation saved value
         view.sendAsGroupIntent
+            .withLatestFrom(state) { _, state -> !state.sendAsGroup }
+            .doOnNext { newSendAsGroup -> newState { copy(sendAsGroup = newSendAsGroup) } }
             .observeOn(Schedulers.io())
-            .withLatestFrom(conversation, state) { _, conversation, state ->
-                conversationRepo.updateSendAsGroup(conversation.id, !state.sendAsGroup)
+            .withLatestFrom(conversation) { newSendAsGroup, conversation ->
+                conversationRepo.updateSendAsGroup(conversation.id, newSendAsGroup)
             }
             .autoDisposable(view.scope())
             .subscribe()
@@ -828,17 +832,17 @@ class ComposeViewModel @Inject constructor(
                     view.requestCamera()
                 }
 
-        // pick a photo (specifically) from image provider apps
+        // pick a photo or video from image provider apps
         view.attachImageFileIntent
             .doOnNext { newState { copy(attaching = false) } }
             .autoDisposable(view.scope())
-            .subscribe { view.requestGallery("image/*", ComposeView.ATTACH_FILE_REQUEST_CODE) }
+            .subscribe { view.requestGallery() }
 
         // pick any file from any provider apps
         view.attachAnyFileIntent
             .doOnNext { newState { copy(attaching = false) } }
             .autoDisposable(view.scope())
-            .subscribe { view.requestGallery("*/*", ComposeView.ATTACH_FILE_REQUEST_CODE) }
+            .subscribe { view.requestFilePicker() }
 
         // Choose a time to schedule the message
         view.scheduleIntent
@@ -924,21 +928,18 @@ class ComposeViewModel @Inject constructor(
                     }
                 }
 
-        // set canSend state depending on if there is text input, an attachment or a schedule set
+        // set canSend state depending on if there is text input or an attachment
         Observables.combineLatest(
-            view.textChangedIntent,     // input message text changed
+            view.textChangedIntent,
             state
-                .distinctUntilChanged { state -> state.attachments }    // attachments changed
-                .map { it.attachments.size },   // number of attachments
-            state.distinctUntilChanged { state -> state.scheduled }    // schedule set or not
-                .map { it.scheduled }
+                .distinctUntilChanged { state -> state.attachments }
+                .map { it.attachments.size }
         )
             .autoDisposable(view.scope())
             .subscribe {
                 newState {
                     copy(
-                        canSend = (it.first.isNotBlank() || (it.second > 0)),
-                        scheduled = it.third
+                        canSend = (it.first.isNotBlank() || (it.second > 0))
                     )
                 }
             }
@@ -1197,7 +1198,7 @@ class ComposeViewModel @Inject constructor(
                 }
 
                 if ((delay != 0 || state.scheduled != 0L) && !permissionManager.hasExactAlarms()) {
-                    navigator.showExactAlarmsSettings()
+                    externalNavigator.showExactAlarmsSettings()
                     return@withLatestFrom false
                 }
 

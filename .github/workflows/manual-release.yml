@@ -24,13 +24,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
@@ -95,7 +95,7 @@ jobs:
           PY
 
       - name: Upload modified build.gradle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: version-bump-artifact
           path: presentation/build.gradle
@@ -103,6 +103,8 @@ jobs:
   generate_release_notes:
     needs: bump-version
     uses: ./.github/workflows/generate-release-notes.yml
+    permissions:
+      contents: write
     with:
       version_name: ${{ needs.bump-version.outputs.new_version_name }}
 
@@ -112,7 +114,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: true
@@ -124,15 +126,17 @@ jobs:
         run: |
           set -euo pipefail
           python3 <<'PY'
+          
           import os, re, pathlib
           notes = os.environ.get("NOTES", "")
-          clean = re.sub(
-              r'(?im)^\s*by\s+\S+\s+in\s+.*$',
-              '',
-              re.sub(r'(?im)^\s*["\']?\*\*Full\s+Changelog\*\*\s*:\s*.*$', '', notes)
-          ).rstrip()
+          
+          cleanPrTitles = re.sub(r'(?im)\s+by\s+@?\S+\s+in\s+https?://\S+', '', notes)
+          cleanNewContributors = re.sub(r'(?is)##\s+New\s+Contributors.*', '', cleanPrTitles).strip()
+          # In case there isn't a 'New Contributors' line we should still remove the full changelog line after it
+          cleanTotalChangelog = re.sub(r'(?im)^\s*["\']?\*\*Full\s+Changelog\*\*\s*:\s*.*$', '', cleanNewContributors)
 
-          pathlib.Path("sanitized_notes.txt").write_text(clean)
+          pathlib.Path("sanitized_notes.txt").write_text(cleanTotalChangelog)
+          
           PY
           {
             echo "clean_notes<<EOF"
@@ -185,36 +189,39 @@ jobs:
           PY
 
       - name: Upload changelog.json
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: changelog-json-artifact
           path: data/src/main/assets/changelog.json
 
   open_release_pr:
     needs: [bump-version, generate_release_notes,   generate_app_changelog]
+    permissions:
+        contents: write
+        pull-requests: write
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: true
 
       - name: Download modified build.gradle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: version-bump-artifact
           path: presentation/
 
       - name: Download modified changelog
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: changelog-json-artifact
           path: data/src/main/assets/
 
       - name: Open release PR
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: release/v${{ needs.bump-version.outputs.new_version_name }}
